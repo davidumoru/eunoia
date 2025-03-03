@@ -1,7 +1,10 @@
 import { z } from "zod";
-import { ChatOpenAI } from "@langchain/openai";
+import { ChatOpenAI, OpenAIEmbeddings } from "@langchain/openai";
 import { StructuredOutputParser } from "langchain/output_parsers";
 import { PromptTemplate } from "@langchain/core/prompts";
+import { Document } from "langchain/document";
+import { loadQARefineChain } from "langchain/chains";
+import { MemoryVectorStore } from "langchain/vectorstores/memory";
 
 const parser = StructuredOutputParser.fromZodSchema(
   z.object({
@@ -62,4 +65,34 @@ export const analyze = async (content) => {
   } catch (error) {
     console.error("Error in analyze function:", error);
   }
+};
+
+export const qa = async (question, entries) => {
+  const docs = entries.map((entry) => {
+    return new Document({
+      pageContent: entry.content,
+      metadata: {
+        id: entry.id,
+        createdAt: entry.createdAt,
+      },
+    });
+  });
+
+  const model = new ChatOpenAI({
+    temperature: 0,
+    modelName: "gpt-3.5-turbo",
+    openAIApiKey: process.env.OPENAI_API_KEY,
+  });
+  const embeddings = new OpenAIEmbeddings({
+    model: "text-embedding-3-large",
+  });
+  const chain = loadQARefineChain(model);
+  const vectorStore = await MemoryVectorStore.fromDocuments(docs, embeddings);
+  const relevantDocs = await vectorStore.similaritySearch(question);
+  const res = await chain.call({
+    input_documents: relevantDocs,
+    question,
+  });
+
+  return res.output_text;
 };
